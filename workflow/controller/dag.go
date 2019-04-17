@@ -233,7 +233,7 @@ func (woc *wfOperationCtx) executeDAGTask(dagCtx *dagContext, taskName string) {
 		depNode := dagCtx.getTaskNode(depName)
 		if depNode != nil {
 			if depNode.Completed() {
-				if !depNode.Successful() {
+				if !depNode.Successful() && !dagCtx.getTask(depName).ContinuesOn(depNode.Phase) {
 					dependenciesSuccessful = false
 				}
 				continue
@@ -380,6 +380,13 @@ func (woc *wfOperationCtx) resolveDependencyReferences(dagCtx *dagContext, task 
 	}
 
 	// Perform replacement
+	// Replace woc.volumes
+	err := woc.substituteParamsInVolumes(scope.replaceMap())
+	if err != nil {
+		return nil, err
+	}
+
+	// Replace task's parameters
 	taskBytes, err := json.Marshal(task)
 	if err != nil {
 		return nil, errors.InternalWrapError(err)

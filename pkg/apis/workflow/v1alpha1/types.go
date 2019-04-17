@@ -129,6 +129,10 @@ type WorkflowSpec struct {
 	// explicitly to 'ClusterFirstWithHostNet'.
 	DNSPolicy *apiv1.DNSPolicy `json:"dnsPolicy,omitempty"`
 
+	// PodDNSConfig defines the DNS parameters of a pod in addition to
+	// those generated from DNSPolicy.
+	DNSConfig *apiv1.PodDNSConfig `json:"dnsConfig,omitempty"`
+
 	// OnExit is a template reference which is invoked at the end of the
 	// workflow, irrespective of the success, failure, or error of the
 	// primary workflow.
@@ -145,6 +149,7 @@ type WorkflowSpec struct {
 	// allowed to run before the controller terminates the workflow. A value of zero is used to
 	// terminate a Running workflow
 	ActiveDeadlineSeconds *int64 `json:"activeDeadlineSeconds,omitempty"`
+
 	// Priority is used if controller is configured to process limited number of workflows in parallel. Workflows with higher priority are processed first.
 	Priority *int32 `json:"priority,omitempty"`
 
@@ -153,6 +158,12 @@ type WorkflowSpec struct {
 	// Default scheduler will be used if neither specified.
 	// +optional
 	SchedulerName string `json:"schedulerName,omitempty"`
+
+	// PriorityClassName to apply to workflow pods.
+	PodPriorityClassName string `json:"podPriorityClassName,omitempty"`
+
+	// Priority to apply to workflow pods.
+	PodPriority *int32 `json:"podPriority,omitempty"`
 }
 
 // Template is a reusable and composable unit of execution in a workflow
@@ -198,9 +209,15 @@ type Template struct {
 	// Suspend template subtype which can suspend a workflow when reaching the step
 	Suspend *SuspendTemplate `json:"suspend,omitempty"`
 
+	// Volumes is a list of volumes that can be mounted by containers in a template.
+	Volumes []apiv1.Volume `json:"volumes,omitempty"`
+
+	// InitContainers is a list of containers which run before the main container.
+	InitContainers []UserContainer `json:"initContainers,omitempty"`
+
 	// Sidecars is a list of containers which run alongside the main container
 	// Sidecars are automatically killed when the main container completes
-	Sidecars []Sidecar `json:"sidecars,omitempty"`
+	Sidecars []UserContainer `json:"sidecars,omitempty"`
 
 	// Location in which all files related to the step will be stored (logs, artifacts, etc...).
 	// Can be overridden by individual items in Outputs. If omitted, will use the default
@@ -229,6 +246,12 @@ type Template struct {
 	// If neither specified, the pod will be dispatched by default scheduler.
 	// +optional
 	SchedulerName string `json:"schedulerName,omitempty"`
+
+	// PriorityClassName to apply to workflow pods.
+	PriorityClassName string `json:"priorityClassName,omitempty"`
+
+	// Priority to apply to workflow pods.
+	Priority *int32 `json:"priority,omitempty"`
 }
 
 // Inputs are the mechanism for passing parameters, artifacts, volumes from one template to another
@@ -306,6 +329,9 @@ type Artifact struct {
 
 	// Archive controls how the artifact will be saved to the artifact repository.
 	Archive *ArchiveStrategy `json:"archive,omitempty"`
+
+	// Make Artifacts optional, if Artifacts doesn't generate or exist
+	Optional bool `json:"optional,omitempty"`
 }
 
 // ArchiveStrategy describes how to archive files/directory when saving artifacts
@@ -384,6 +410,10 @@ type WorkflowStep struct {
 
 	// When is an expression in which the step should conditionally execute
 	When string `json:"when,omitempty"`
+
+	// ContinueOn makes argo to proceed with the following step even if this step fails.
+	// Errors and Failed states can be specified
+	ContinueOn *ContinueOn `json:"continueOn,omitempty"`
 }
 
 // Item expands a single workflow step into multiple parallel steps
@@ -447,12 +477,12 @@ type Arguments struct {
 	Artifacts []Artifact `json:"artifacts,omitempty"`
 }
 
-// Sidecar is a container which runs alongside the main container
-type Sidecar struct {
+// UserContainer is a container specified by a user.
+type UserContainer struct {
 	apiv1.Container `json:",inline"`
 
 	// MirrorVolumeMounts will mount the same volumes specified in the main container
-	// to the sidecar (including artifacts), at the same mountPaths. This enables
+	// to the container (including artifacts), at the same mountPaths. This enables
 	// dind daemon to partially see the same filesystem as the main container in
 	// order to use features such as docker volume binding
 	MirrorVolumeMounts *bool `json:"mirrorVolumeMounts,omitempty"`
@@ -472,6 +502,9 @@ type WorkflowStatus struct {
 
 	// A human readable message indicating details about why the workflow is in this condition.
 	Message string `json:"message,omitempty"`
+
+	// Compressed and base64 decoded Nodes map
+	CompressedNodes string `json:"compressedNodes,omitempty"`
 
 	// Nodes is a mapping between a node ID and the node's status.
 	Nodes map[string]NodeStatus `json:"nodes,omitempty"`
@@ -632,6 +665,10 @@ func (s *S3Artifact) String() string {
 	return fmt.Sprintf("%s://%s/%s/%s", protocol, s.Endpoint, s.Bucket, s.Key)
 }
 
+func (s *S3Artifact) HasLocation() bool {
+	return s != nil && s.Bucket != ""
+}
+
 // GitArtifact is the location of an git artifact
 type GitArtifact struct {
 	// Repo is the git repository
@@ -645,8 +682,16 @@ type GitArtifact struct {
 
 	// PasswordSecret is the secret selector to the repository password
 	PasswordSecret *apiv1.SecretKeySelector `json:"passwordSecret,omitempty"`
+
 	// SSHPrivateKeySecret is the secret selector to the repository ssh private key
 	SSHPrivateKeySecret *apiv1.SecretKeySelector `json:"sshPrivateKeySecret,omitempty"`
+
+	// InsecureIgnoreHostKey disables SSH strict host key checking during git clone
+	InsecureIgnoreHostKey bool `json:"insecureIgnoreHostKey,omitempty"`
+}
+
+func (g *GitArtifact) HasLocation() bool {
+	return g != nil && g.Repo != ""
 }
 
 // ArtifactoryAuth describes the secret selectors required for authenticating to artifactory
@@ -669,6 +714,10 @@ func (a *ArtifactoryArtifact) String() string {
 	return a.URL
 }
 
+func (a *ArtifactoryArtifact) HasLocation() bool {
+	return a != nil && a.URL != ""
+}
+
 // HDFSArtifact is the location of an HDFS artifact
 type HDFSArtifact struct {
 	HDFSConfig `json:",inline"`
@@ -678,6 +727,10 @@ type HDFSArtifact struct {
 
 	// Force copies a file forcibly even if it exists (default: false)
 	Force bool `json:"force,omitempty"`
+}
+
+func (h *HDFSArtifact) HasLocation() bool {
+	return h != nil && len(h.Addresses) > 0
 }
 
 // HDFSConfig is configurations for HDFS
@@ -737,10 +790,18 @@ type RawArtifact struct {
 	Data string `json:"data"`
 }
 
+func (r *RawArtifact) HasLocation() bool {
+	return r != nil
+}
+
 // HTTPArtifact allows an file served on HTTP to be placed as an input artifact in a container
 type HTTPArtifact struct {
 	// URL of the artifact
 	URL string `json:"url"`
+}
+
+func (h *HTTPArtifact) HasLocation() bool {
+	return h != nil && h.URL != ""
 }
 
 // ScriptTemplate is a template subtype to enable scripting through code steps
@@ -756,6 +817,10 @@ type ResourceTemplate struct {
 	// Action is the action to perform to the resource.
 	// Must be one of: get, create, apply, delete, replace
 	Action string `json:"action"`
+
+	// MergeStrategy is the strategy used to merge a patch. It defaults to "strategic"
+	// Must be one of: strategic, merge, json
+	MergeStrategy string `json:"mergeStrategy,omitempty"`
 
 	// Manifest contains the kubernetes manifest
 	Manifest string `json:"manifest"`
@@ -845,6 +910,10 @@ type DAGTask struct {
 
 	// When is an expression in which the task should conditionally execute
 	When string `json:"when,omitempty"`
+
+	// ContinueOn makes argo to proceed with the following step even if this step fails.
+	// Errors and Failed states can be specified
+	ContinueOn *ContinueOn `json:"continueOn,omitempty"`
 }
 
 // SuspendTemplate is a template subtype to suspend a workflow at a predetermined point in time
@@ -918,7 +987,12 @@ func (args *Arguments) GetParameterByName(name string) *Parameter {
 
 // HasLocation whether or not an artifact has a location defined
 func (a *Artifact) HasLocation() bool {
-	return a.S3 != nil || a.Git != nil || a.HTTP != nil || a.Artifactory != nil || a.Raw != nil || a.HDFS != nil
+	return a.S3.HasLocation() ||
+		a.Git.HasLocation() ||
+		a.HTTP.HasLocation() ||
+		a.Artifactory.HasLocation() ||
+		a.Raw.HasLocation() ||
+		a.HDFS.HasLocation()
 }
 
 // GetTemplate retrieves a defined template by its name
@@ -939,4 +1013,36 @@ func (wf *Workflow) NodeID(name string) string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(name))
 	return fmt.Sprintf("%s-%v", wf.ObjectMeta.Name, h.Sum32())
+}
+
+// ContinueOn defines if a workflow should continue even if a task or step fails/errors.
+// It can be specified if the workflow should continue when the pod errors, fails or both.
+type ContinueOn struct {
+	// +optional
+	Error bool `json:"error,omitempty"`
+	// +optional
+	Failed bool `json:"failed,omitempty"`
+}
+
+func continues(c *ContinueOn, phase NodePhase) bool {
+	if c == nil {
+		return false
+	}
+	if c.Error == true && phase == NodeError {
+		return true
+	}
+	if c.Failed == true && phase == NodeFailed {
+		return true
+	}
+	return false
+}
+
+// ContinuesOn returns whether the DAG should be proceeded if the task fails or errors.
+func (t *DAGTask) ContinuesOn(phase NodePhase) bool {
+	return continues(t.ContinueOn, phase)
+}
+
+// ContinuesOn returns whether the StepGroup should be proceeded if the task fails or errors.
+func (s *WorkflowStep) ContinuesOn(phase NodePhase) bool {
+	return continues(s.ContinueOn, phase)
 }
